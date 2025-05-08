@@ -1,0 +1,212 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template to set up observability infrastructure for PCS using Amazon Managed Prometheus and Amazon Managed Grafana'
+
+Parameters:
+  GrafanaName:
+    Type: String
+    Default: pcs-grafana
+    Description: Name for the Amazon Managed Grafana workspace
+  
+  GrafanaAdminUserEmail:
+    Type: String
+    Description: Email address for the Grafana admin user
+    AllowedPattern: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    ConstraintDescription: Must be a valid email address
+  
+  PrometheusName:
+    Type: String
+    Default: pcs-prometheus
+    Description: Name for the Amazon Managed Prometheus workspace
+  
+  RetentionInDays:
+    Type: Number
+    Default: 30
+    Description: Number of days to retain metrics in Amazon Managed Prometheus
+    MinValue: 1
+    MaxValue: 150
+  
+  CreateCloudWatchDashboard:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Whether to create a CloudWatch dashboard for PCS metrics
+
+Resources:
+  # Amazon Managed Prometheus Workspace
+  PrometheusWorkspace:
+    Type: 'AWS::AMP::Workspace'
+    Properties:
+      Alias: !Ref PrometheusName
+      Tags:
+        - Key: Name
+          Value: !Ref PrometheusName
+        - Key: Purpose
+          Value: PCS-Observability
+
+  # Amazon Managed Grafana Workspace
+  GrafanaWorkspace:
+    Type: 'AWS::Grafana::Workspace'
+    Properties:
+      Name: !Ref GrafanaName
+      AccountAccessType: CURRENT_ACCOUNT
+      AuthenticationProviders:
+        - AWS_SSO
+      PermissionType: SERVICE_MANAGED
+      DataSources:
+        - PROMETHEUS
+        - CLOUDWATCH
+      NotificationDestinations:
+        - SNS
+      Tags:
+        - Key: Name
+          Value: !Ref GrafanaName
+        - Key: Purpose
+          Value: PCS-Observability
+
+  # Grafana Admin User
+  GrafanaAdminUser:
+    Type: 'AWS::Grafana::RoleAssociation'
+    Properties:
+      Role: ADMIN
+      UserIds:
+        - !Ref GrafanaAdminUserEmail
+      WorkspaceId: !GetAtt GrafanaWorkspace.Id
+
+  # IAM Role for Prometheus Scraping
+  PrometheusScraperRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AmazonPrometheusRemoteWriteAccess'
+      Path: /
+      Tags:
+        - Key: Purpose
+          Value: PCS-Observability
+
+  # IAM Instance Profile for EC2 instances
+  PrometheusScraperInstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Path: /
+      Roles:
+        - !Ref PrometheusScraperRole
+
+  # CloudWatch Dashboard for PCS metrics (optional)
+  CloudWatchDashboard:
+    Type: 'AWS::CloudWatch::Dashboard'
+    Condition: CreateDashboard
+    Properties:
+      DashboardName: !Sub 'PCS-Metrics-Dashboard-${AWS::StackName}'
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/ParallelCluster", "CPUUtilization", "ClusterName", "*" ]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "region": "${AWS::Region}",
+                "title": "PCS Cluster CPU Utilization"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/ParallelCluster", "MemoryUtilization", "ClusterName", "*" ]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "region": "${AWS::Region}",
+                "title": "PCS Cluster Memory Utilization"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 6,
+              "width": 24,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/ParallelCluster", "JobsPending", "ClusterName", "*" ],
+                  [ ".", "JobsRunning", ".", "." ]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "region": "${AWS::Region}",
+                "title": "PCS Cluster Job Status"
+              }
+            }
+          ]
+        }
+
+  # SSM Parameter to store Prometheus endpoint
+  PrometheusEndpointParameter:
+    Type: 'AWS::SSM::Parameter'
+    Properties:
+      Name: !Sub '/pcs/observability/${PrometheusName}/endpoint'
+      Type: String
+      Value: !GetAtt PrometheusWorkspace.PrometheusEndpoint
+      Description: 'Amazon Managed Prometheus endpoint for PCS'
+      Tags:
+        Purpose: PCS-Observability
+
+  # SSM Parameter to store Grafana endpoint
+  GrafanaEndpointParameter:
+    Type: 'AWS::SSM::Parameter'
+    Properties:
+      Name: !Sub '/pcs/observability/${GrafanaName}/endpoint'
+      Type: String
+      Value: !GetAtt GrafanaWorkspace.Endpoint
+      Description: 'Amazon Managed Grafana endpoint for PCS'
+      Tags:
+        Purpose: PCS-Observability
+
+Conditions:
+  CreateDashboard: !Equals [!Ref CreateCloudWatchDashboard, 'true']
+
+Outputs:
+  PrometheusWorkspaceId:
+    Description: 'Amazon Managed Prometheus Workspace ID'
+    Value: !GetAtt PrometheusWorkspace.WorkspaceId
+    Export:
+      Name: !Sub '${AWS::StackName}-PrometheusWorkspaceId'
+  
+  PrometheusEndpoint:
+    Description: 'Amazon Managed Prometheus Endpoint'
+    Value: !GetAtt PrometheusWorkspace.PrometheusEndpoint
+    Export:
+      Name: !Sub '${AWS::StackName}-PrometheusEndpoint'
+  
+  GrafanaWorkspaceId:
+    Description: 'Amazon Managed Grafana Workspace ID'
+    Value: !GetAtt GrafanaWorkspace.Id
+    Export:
+      Name: !Sub '${AWS::StackName}-GrafanaWorkspaceId'
+  
+  GrafanaEndpoint:
+    Description: 'Amazon Managed Grafana Endpoint'
+    Value: !GetAtt GrafanaWorkspace.Endpoint
+    Export:
+      Name: !Sub '${AWS::StackName}-GrafanaEndpoint'

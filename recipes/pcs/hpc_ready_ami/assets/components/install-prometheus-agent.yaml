@@ -1,0 +1,59 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template to create an EC2 ImageBuilder component for installing Prometheus agent'
+
+Parameters:
+  HpcRecipesS3Bucket:
+    Type: String
+    Default: aws-hpc-recipes
+    Description: S3 bucket containing HPC Recipes assets
+  
+  HpcRecipesBranch:
+    Type: String
+    Default: main
+    Description: Branch name for HPC Recipes assets
+
+Resources:
+  PrometheusAgentInstallerComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: PrometheusAgentInstaller
+      Platform: Linux
+      Version: 1.0.0
+      Description: Installs and configures Prometheus agent for PCS clusters
+      Data: !Sub |
+        name: PrometheusAgentInstaller
+        description: Installs and configures Prometheus agent for PCS clusters
+        schemaVersion: 1.0
+        phases:
+          - name: build
+            steps:
+              - name: DownloadScripts
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - |
+                      mkdir -p /tmp/scripts
+                      cd /tmp/scripts
+                      curl -fsSL "https://${HpcRecipesS3Bucket}.s3.amazonaws.com/${HpcRecipesBranch}/recipes/pcs/hpc_ready_ami/assets/scripts/common.sh" -o "common.sh"
+                      curl -fsSL "https://${HpcRecipesS3Bucket}.s3.amazonaws.com/${HpcRecipesBranch}/recipes/pcs/hpc_ready_ami/assets/scripts/install-prometheus-agent.sh" -o "install-prometheus-agent.sh"
+                      chmod +x *.sh
+              - name: InstallPrometheusAgent
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - |
+                      cd /tmp/scripts
+                      # Note: The --endpoint parameter will be provided during AMI customization or instance launch
+                      # This component just installs the agent without configuring the endpoint
+                      ./install-prometheus-agent.sh --endpoint "{{ssm:/pcs/observability/prometheus/endpoint}}" --gpu-exporter auto --efa-exporter auto
+              - name: Cleanup
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - |
+                      rm -rf /tmp/scripts
+
+Outputs:
+  ComponentArn:
+    Description: ARN of the created EC2 ImageBuilder component
+    Value: !GetAtt PrometheusAgentInstallerComponent.Arn
