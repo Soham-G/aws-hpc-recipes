@@ -83,6 +83,16 @@ Parameters:
     AllowedPattern: '^(?!.*/\.git$)(?!.*/\.)(?!.*\\.\.)[a-zA-Z0-9-_\.]+$'
   # /Substack Parameters
 
+  S3BucketName:
+    Type: String
+    Default: soham-hpc-stockholm-assets
+    Description: Name of the S3 bucket containing the scripts
+  
+  S3BucketPrefix:
+    Type: String
+    Default: hpc-recipes-temp
+    Description: Prefix (folder path) in the S3 bucket where scripts are stored
+
 Conditions: 
   DistroImageStartsWithAmi: !Equals 
     - !Select
@@ -107,6 +117,7 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
         - arn:aws:iam::aws:policy/EC2InstanceProfileForImageBuilder
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
       Path: /
 
   ImageBuilderInstanceProfile:
@@ -125,7 +136,7 @@ Resources:
       Parameters:
         HpcRecipesS3Bucket: !Ref HpcRecipesS3Bucket
         HpcRecipesBranch: !Ref HpcRecipesBranch
-      TemplateURL: !Sub 'https://${HpcRecipesS3Bucket}.s3.us-east-1.amazonaws.com/${HpcRecipesBranch}/recipes/pcs/hpc_ready_ami/assets/nested-imagebuilder-components.yaml'
+      TemplateURL: 'https://soham-hpc-stockholm-assets.s3.eu-north-1.amazonaws.com/hpc-recipes-temp/nested-imagebuilder-components.yaml'
 
   PCSImageRecipe:
     Type: AWS::ImageBuilder::ImageRecipe
