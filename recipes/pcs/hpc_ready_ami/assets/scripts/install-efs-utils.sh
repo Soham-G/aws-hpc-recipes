@@ -35,7 +35,12 @@ build_and_install_rpm() {
 build_and_install_deb() {
     logger "DEB install from source" "INFO"
     sudo apt-get update
-    sudo apt-get -y install git binutils rustc cargo pkg-config libssl-dev
+    sudo apt-get -y install git binutils pkg-config libssl-dev curl
+    
+    # Install newer Rust version using rustup
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    source "$HOME/.cargo/env"
+    
     # Create a temporary directory
     local temp_dir=$(mktemp -d)
     cd "$temp_dir" || exit 1
