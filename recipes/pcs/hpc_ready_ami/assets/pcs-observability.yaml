@@ -61,6 +61,14 @@ Parameters:
       - 'true'
       - 'false'
     Description: Whether to create a CloudWatch dashboard for PCS metrics
+    
+  UseHTTPS:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Whether to configure HTTPS with a self-signed certificate
 
 Resources:
   # Amazon Managed Prometheus Workspace
@@ -91,6 +99,16 @@ Resources:
           ToPort: 3000
           CidrIp: !Ref ClientIpCidr
           Description: Grafana web interface
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref ClientIpCidr
+          Description: HTTPS access
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Ref ClientIpCidr
+          Description: HTTP access
       Tags:
         - Key: Name
           Value: grafana-security-group
@@ -211,8 +229,47 @@ Resources:
             exit 1
           fi
           
-          # Configure Grafana
-          cat > /etc/grafana/grafana.ini << EOF
+          # Set up HTTPS with self-signed certificate if enabled
+          USE_HTTPS="${UseHTTPS}"
+          
+          if [ "$USE_HTTPS" = "true" ]; then
+            echo "Setting up HTTPS with self-signed certificate"
+            
+            # Create directory for Grafana certificates
+            mkdir -p /etc/grafana/ssl
+            
+            # Generate self-signed certificate
+            echo "Generating self-signed certificate..."
+            openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+              -keyout /etc/grafana/ssl/grafana.key \
+              -out /etc/grafana/ssl/grafana.crt \
+              -subj "/C=US/ST=State/L=City/O=Organization/CN=$(curl -s http://169.254.169.254/latest/meta-data/public-hostname)"
+            
+            # Set proper permissions
+            chown -R grafana:grafana /etc/grafana/ssl
+            chmod 400 /etc/grafana/ssl/grafana.key
+            
+            # Configure Grafana for HTTPS
+            cat > /etc/grafana/grafana.ini << EOF
+          [security]
+          admin_user = ${GrafanaAdminUsername}
+          admin_password = ${GrafanaAdminPassword}
+          
+          [server]
+          protocol = https
+          http_port = 3000
+          domain = $(curl -s http://169.254.169.254/latest/meta-data/public-hostname)
+          cert_file = /etc/grafana/ssl/grafana.crt
+          cert_key = /etc/grafana/ssl/grafana.key
+          
+          [auth.anonymous]
+          enabled = false
+          EOF
+            
+            echo "Self-signed certificate created successfully"
+          else
+            # Configure Grafana for HTTP
+            cat > /etc/grafana/grafana.ini << EOF
           [security]
           admin_user = ${GrafanaAdminUsername}
           admin_password = ${GrafanaAdminPassword}
@@ -224,6 +281,7 @@ Resources:
           [auth.anonymous]
           enabled = false
           EOF
+          fi
           
           # Configure Prometheus data source
           mkdir -p /etc/grafana/provisioning/datasources/
@@ -397,13 +455,17 @@ Resources:
     Properties:
       Name: !Sub '/pcs/observability/grafana/endpoint'
       Type: String
-      Value: !Sub 'http://${GrafanaInstance.PublicDnsName}:3000'
+      Value: !If 
+        - ConfigureHTTPS
+        - !Sub 'https://${GrafanaInstance.PublicDnsName}'
+        - !Sub 'http://${GrafanaInstance.PublicDnsName}:3000'
       Description: 'Self-hosted Grafana endpoint for PCS'
       Tags:
         Purpose: PCS-Observability
 
 Conditions:
   CreateDashboard: !Equals [!Ref CreateCloudWatchDashboard, 'true']
+  ConfigureHTTPS: !Equals [!Ref UseHTTPS, 'true']
 
 Outputs:
   PrometheusWorkspaceId:
@@ -432,6 +494,9 @@ Outputs:
   
   GrafanaURL:
     Description: 'Grafana URL'
-    Value: !Sub 'http://${GrafanaInstance.PublicDnsName}:3000'
+    Value: !If 
+      - ConfigureHTTPS
+      - !Sub 'https://${GrafanaInstance.PublicDnsName}:3000'
+      - !Sub 'http://${GrafanaInstance.PublicDnsName}:3000'
     Export:
       Name: !Sub '${AWS::StackName}-GrafanaURL'
