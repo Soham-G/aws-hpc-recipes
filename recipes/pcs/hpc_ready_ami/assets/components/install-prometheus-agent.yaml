@@ -34,8 +34,8 @@ Resources:
                     - |
                       mkdir -p /tmp/scripts
                       cd /tmp/scripts
-                      curl -fsSL "https://${HpcRecipesS3Bucket}.s3.amazonaws.com/${HpcRecipesBranch}/recipes/pcs/hpc_ready_ami/assets/scripts/common.sh" -o "common.sh"
-                      curl -fsSL "https://${HpcRecipesS3Bucket}.s3.amazonaws.com/${HpcRecipesBranch}/recipes/pcs/hpc_ready_ami/assets/scripts/install-prometheus-agent.sh" -o "install-prometheus-agent.sh"
+                      curl -fsSL "https://raw.githubusercontent.com/Soham-G/aws-hpc-recipes/pcs-observability/recipes/pcs/hpc_ready_ami/assets/scripts/common.sh" -o "common.sh"
+                      curl -fsSL "https://raw.githubusercontent.com/Soham-G/aws-hpc-recipes/pcs-observability/recipes/pcs/hpc_ready_ami/assets/scripts/install-prometheus-agent.sh" -o "install-prometheus-agent.sh"
                       chmod +x *.sh
               - name: InstallPrometheusAgent
                 action: ExecuteBash
@@ -45,7 +45,7 @@ Resources:
                       cd /tmp/scripts
                       # Note: The --endpoint parameter will be provided during AMI customization or instance launch
                       # This component just installs the agent without configuring the endpoint
-                      ./install-prometheus-agent.sh --endpoint "{{ssm:/pcs/observability/prometheus/endpoint}}" --gpu-exporter auto --efa-exporter auto
+                      ./install-prometheus-agent.sh --endpoint "{{{{ssm:/pcs/observability/prometheus/endpoint}}}}" --gpu-exporter auto --efa-exporter auto
               - name: Cleanup
                 action: ExecuteBash
                 inputs:
