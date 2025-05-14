@@ -1,17 +1,46 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'CloudFormation template to set up observability infrastructure for PCS using Amazon Managed Prometheus and Amazon Managed Grafana'
+Description: 'CloudFormation template to set up observability infrastructure for PCS using Amazon Managed Prometheus and self-hosted Grafana on EC2'
 
 Parameters:
-  GrafanaName:
+  GrafanaInstanceType:
     Type: String
-    Default: pcs-grafana
-    Description: Name for the Amazon Managed Grafana workspace
+    Default: t3.medium
+    Description: EC2 instance type for Grafana server
+    AllowedValues:
+      - t3.small
+      - t3.medium
+      - t3.large
+      - m5.large
   
-  GrafanaAdminUserEmail:
+  GrafanaAdminUsername:
     Type: String
-    Description: Email address for the Grafana admin user
-    AllowedPattern: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-    ConstraintDescription: Must be a valid email address
+    Default: admin
+    Description: Username for the Grafana admin user
+  
+  GrafanaAdminPassword:
+    Type: String
+    NoEcho: true
+    Description: Password for the Grafana admin user
+    MinLength: 8
+  
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the Grafana instance
+  
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC where the Grafana instance will be deployed
+  
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet where the Grafana instance will be deployed (choose a public subnet to access the dashboard)
+  
+  ClientIpCidr:
+    Type: String
+    Description: CIDR block for client IP address to allow access to Grafana (e.g., 192.168.1.1/32)
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: Must be a valid IP CIDR range of the form x.x.x.x/x
+    Default: 45.12.242.84/32
   
   PrometheusName:
     Type: String
@@ -36,7 +65,7 @@ Parameters:
 Resources:
   # Amazon Managed Prometheus Workspace
   PrometheusWorkspace:
-    Type: 'AWS::AMP::Workspace'
+    Type: 'AWS::APS::Workspace'
     Properties:
       Alias: !Ref PrometheusName
       Tags:
@@ -45,34 +74,155 @@ Resources:
         - Key: Purpose
           Value: PCS-Observability
 
-  # Amazon Managed Grafana Workspace
-  GrafanaWorkspace:
-    Type: 'AWS::Grafana::Workspace'
+  # Security Group for Grafana EC2 instance
+  GrafanaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
     Properties:
-      Name: !Ref GrafanaName
-      AccountAccessType: CURRENT_ACCOUNT
-      AuthenticationProviders:
-        - AWS_SSO
-      PermissionType: SERVICE_MANAGED
-      DataSources:
-        - PROMETHEUS
-        - CLOUDWATCH
-      NotificationDestinations:
-        - SNS
+      GroupDescription: Security group for Grafana server
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref ClientIpCidr
+          Description: SSH access
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          CidrIp: !Ref ClientIpCidr
+          Description: Grafana web interface
       Tags:
         - Key: Name
-          Value: !Ref GrafanaName
+          Value: grafana-security-group
         - Key: Purpose
           Value: PCS-Observability
 
-  # Grafana Admin User
-  GrafanaAdminUser:
-    Type: 'AWS::Grafana::RoleAssociation'
+  # IAM Role for Grafana EC2 instance
+  GrafanaInstanceRole:
+    Type: AWS::IAM::Role
     Properties:
-      Role: ADMIN
-      UserIds:
-        - !Ref GrafanaAdminUserEmail
-      WorkspaceId: !GetAtt GrafanaWorkspace.Id
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'
+        - 'arn:aws:iam::aws:policy/AmazonPrometheusQueryAccess'
+        - 'arn:aws:iam::aws:policy/CloudWatchReadOnlyAccess'
+      Path: /
+      Tags:
+        - Key: Purpose
+          Value: PCS-Observability
+
+  # IAM Instance Profile for Grafana EC2 instance
+  GrafanaInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref GrafanaInstanceRole
+
+  # Grafana EC2 Instance
+  GrafanaInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref GrafanaInstanceType
+      ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}'
+      KeyName: !Ref KeyPairName
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !GetAtt GrafanaSecurityGroup.GroupId
+      IamInstanceProfile: !Ref GrafanaInstanceProfile
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 20
+            VolumeType: gp3
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          # Update system
+          yum update -y
+          
+          # Install Grafana
+          cat > /etc/yum.repos.d/grafana.repo << 'EOF'
+          [grafana]
+          name=grafana
+          baseurl=https://packages.grafana.com/oss/rpm
+          repo_gpgcheck=1
+          enabled=1
+          gpgcheck=1
+          gpgkey=https://packages.grafana.com/gpg.key
+          sslverify=1
+          sslcacert=/etc/pki/tls/certs/ca-bundle.crt
+          EOF
+          
+          yum install -y grafana
+          
+          # Configure Grafana
+          cat > /etc/grafana/grafana.ini << 'EOF'
+          [security]
+          admin_user = ${GrafanaAdminUsername}
+          admin_password = ${GrafanaAdminPassword}
+          
+          [server]
+          http_port = 3000
+          domain = $(curl -s http://169.254.169.254/latest/meta-data/public-hostname)
+          
+          [auth.anonymous]
+          enabled = false
+          EOF
+          
+          # Configure Prometheus data source
+          mkdir -p /etc/grafana/provisioning/datasources/
+          cat > /etc/grafana/provisioning/datasources/prometheus.yaml << 'EOF'
+          apiVersion: 1
+          datasources:
+            - name: Prometheus
+              type: prometheus
+              access: proxy
+              url: ${PrometheusWorkspace.PrometheusEndpoint}
+              isDefault: true
+              jsonData:
+                sigV4Auth: true
+                sigV4AuthType: default
+                sigV4Region: ${AWS::Region}
+              version: 1
+              editable: true
+          EOF
+          
+          # Configure CloudWatch data source
+          cat > /etc/grafana/provisioning/datasources/cloudwatch.yaml << 'EOF'
+          apiVersion: 1
+          datasources:
+            - name: CloudWatch
+              type: cloudwatch
+              access: proxy
+              jsonData:
+                authType: default
+                defaultRegion: ${AWS::Region}
+              version: 1
+              editable: true
+          EOF
+          
+          # Start and enable Grafana
+          systemctl daemon-reload
+          systemctl enable grafana-server
+          systemctl start grafana-server
+          
+          # Signal completion
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource GrafanaInstance --region ${AWS::Region}
+      
+      Tags:
+        - Key: Name
+          Value: grafana-server
+        - Key: Purpose
+          Value: PCS-Observability
+      
 
   # IAM Role for Prometheus Scraping
   PrometheusScraperRole:
@@ -176,10 +326,10 @@ Resources:
   GrafanaEndpointParameter:
     Type: 'AWS::SSM::Parameter'
     Properties:
-      Name: !Sub '/pcs/observability/${GrafanaName}/endpoint'
+      Name: !Sub '/pcs/observability/grafana/endpoint'
       Type: String
-      Value: !GetAtt GrafanaWorkspace.Endpoint
-      Description: 'Amazon Managed Grafana endpoint for PCS'
+      Value: !Sub 'http://${GrafanaInstance.PublicDnsName}:3000'
+      Description: 'Self-hosted Grafana endpoint for PCS'
       Tags:
         Purpose: PCS-Observability
 
@@ -199,14 +349,20 @@ Outputs:
     Export:
       Name: !Sub '${AWS::StackName}-PrometheusEndpoint'
   
-  GrafanaWorkspaceId:
-    Description: 'Amazon Managed Grafana Workspace ID'
-    Value: !GetAtt GrafanaWorkspace.Id
+  GrafanaInstanceId:
+    Description: 'Grafana EC2 Instance ID'
+    Value: !Ref GrafanaInstance
     Export:
-      Name: !Sub '${AWS::StackName}-GrafanaWorkspaceId'
+      Name: !Sub '${AWS::StackName}-GrafanaInstanceId'
   
-  GrafanaEndpoint:
-    Description: 'Amazon Managed Grafana Endpoint'
-    Value: !GetAtt GrafanaWorkspace.Endpoint
+  GrafanaPublicDNS:
+    Description: 'Grafana Public DNS'
+    Value: !GetAtt GrafanaInstance.PublicDnsName
     Export:
-      Name: !Sub '${AWS::StackName}-GrafanaEndpoint'
+      Name: !Sub '${AWS::StackName}-GrafanaPublicDNS'
+  
+  GrafanaURL:
+    Description: 'Grafana URL'
+    Value: !Sub 'http://${GrafanaInstance.PublicDnsName}:3000'
+    Export:
+      Name: !Sub '${AWS::StackName}-GrafanaURL'
