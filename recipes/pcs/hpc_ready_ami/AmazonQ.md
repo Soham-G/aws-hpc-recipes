@@ -1,148 +1,78 @@
 # PCS Observability with Amazon Managed Prometheus
 
-This document describes the observability infrastructure created for AWS Parallel Computing Service (PCS) using Amazon Managed Prometheus.
+This document describes how to set up observability for AWS Parallel Computing Service (PCS) using Amazon Managed Prometheus.
 
 ## Overview
 
-The CloudFormation template `pcs-observability.yaml` creates the following resources:
+The solution creates the following resources:
 
 1. **Amazon Managed Prometheus Workspace** - A fully managed Prometheus-compatible monitoring service
-2. **IAM Roles and Policies** - For secure access to the monitoring services
+2. **PCS-ready AMI with Prometheus Agent** - Custom AMI with pre-configured monitoring capabilities
 3. **CloudWatch Dashboard** - For basic PCS metrics visualization
-4. **SSM Parameters** - To store endpoints for easy reference
+4. **IAM Roles and Policies** - For secure access to monitoring services
 
-Additionally, the following components are provided:
+## Quick Start Deployment
 
-1. **Prometheus Agent Installation Script** - For installing and configuring Prometheus on PCS nodes
-2. **EC2 ImageBuilder Component** - For integrating Prometheus agent into PCS AMIs
+### Deploy grafana instance and prometheus store
 
-## Deployment Instructions
+1. Deploy script: assets/pcs-observability.yaml
 
-### 1. Deploy the Observability Infrastructure
+### Create AMI with Prometheus agent
 
-deploy template: /assets/pcs-observability.yaml
-
-### 2. Build PCS AMI with Prometheus Agent
-
-add your s3 bucket and upload the modified files there so we can use it in the imagebuilder:
-
-modify this script with your bucket and run:
-
-```bash
-./upload-all-to-s3.sh
-```
-
-Then deploy the CloudFormation stack to build the AMI:
-
-```bash
-./deploy-modified-template.sh
-```
-
-This script will:
-- Create a CloudFormation stack that builds a PCS-ready AMI
-- Include the Prometheus agent component in the AMI
-- Use the forked version of the components from GitHub
-
-You can modify the variables at the top of the `deploy-modified-template.sh` script to customize:
-- Stack name
-- AWS region
-- Linux distribution (Amazon Linux 2, RHEL 9, Rocky Linux 9, or Ubuntu 22.04)
-- Architecture (x86 or arm64)
-- S3 bucket and prefix
-
-### 3. Visualizing Metrics
-
-You can visualize the metrics collected by Prometheus using:
-
-1. The deployed Grafana installation
-2. Amazon CloudWatch dashboards created by the template
-3. Any Prometheus-compatible visualization tool
-
-To configure your visualization tool:
-1. Use the Amazon Managed Prometheus workspace endpoint from SSM Parameter Store
-2. Import the pre-configured dashboard from `assets/dashboards/pcs-cluster-dashboard.json` if using Grafana
-
-## Using the Modified Template
-
-The modified template in this repository includes several enhancements:
-
-1. **Integrated Prometheus Agent** - The AMI build process automatically includes the Prometheus agent
-2. **Auto-Configuration** - The agent is pre-configured to send metrics to your Amazon Managed Prometheus workspace
-3. **Custom Dashboard** - A PCS-specific Grafana dashboard is included for immediate visibility
-
-### Steps to Use the Modified Template
-
-1. Clone the repository and navigate to the hpc_ready_ami directory:
+1. Clone the repository and navigate to the directory:
    ```bash
    git clone https://github.com/Soham-G/aws-hpc-recipes.git -b pcs-observability
    cd aws-hpc-recipes/recipes/pcs/hpc_ready_ami
    ```
 
-2. Upload the required files to your S3 bucket:
+2. Edit the configuration variables in `deploy-pcs-observability.sh`:
    ```bash
-   ./upload-to-s3.sh
+   # Open the file in your preferred editor
+   vim deploy-pcs-observability.sh
+   
+   # Edit these variables at the top of the file:
+   S3_BUCKET="your-s3-bucket-name"
+   S3_PREFIX="your-prefix"
+   REGION="your-aws-region"
+   DISTRO="ubuntu-22-04"  # Options: amzn-2, rocky-9, rhel-9, ubuntu-22-04
+   ARCHITECTURE="x86"     # Options: x86, arm64
    ```
 
-3. Deploy the CloudFormation stack:
+3. Run the deployment script:
    ```bash
-   ./deploy-modified-template.sh
+   ./deploy-pcs-observability.sh
    ```
 
 4. Monitor the stack creation in the CloudFormation console
 
 5. Once the AMI is built, you can use it to launch PCS clusters with built-in observability
 
-### Customizing the Deployment
+## Visualizing Metrics
 
-You can customize the deployment by editing the following files:
+You can visualize the metrics using:
 
-- `upload-to-s3.sh` - Modify S3 bucket, prefix, and which files to upload
-- `deploy-modified-template.sh` - Change region, distribution, architecture, etc.
-- `assets/components/install-prometheus-agent.yaml` - Customize the Prometheus agent configuration
+1. The deployed Grafana installation (if configured)
+2. Amazon CloudWatch dashboards created by the template
+3. Any Prometheus-compatible visualization tool
+
+To configure your visualization tool:
+1. Use the Amazon Managed Prometheus workspace endpoint from SSM Parameter Store
+2. Import the pre-configured dashboard from `assets/grafana-dashboards/pcs-cluster-dashboard.json` if using Grafana
 
 ## Metrics Collected
 
-The Prometheus agent collects the following metrics:
+The Prometheus agent collects:
 
-- **Node Metrics**:
-  - CPU utilization
-  - Memory usage
-  - Disk I/O
-  - Network traffic
-  - System load
-
-- **Slurm Metrics**:
-  - Job status (pending, running, completed)
-  - Queue statistics
-  - Node allocation
-  - Resource utilization
-  
-- **GPU Metrics** (when GPU is present):
-  - GPU utilization
-  - GPU memory usage
-  - GPU temperature
-  - GPU power consumption
-  
-- **EFA Metrics** (when EFA is present):
-  - EFA network traffic (transmit/receive bytes)
-  - EFA packet rate
-  - EFA packet drops
-  - RDMA read/write operations
-
-## Customization
-
-You can customize the monitoring setup by:
-
-1. Modifying the Prometheus configuration in the installation script
-2. Adding additional dashboards to your preferred visualization tool
-3. Setting up alerts in Amazon Managed Prometheus
-4. Integrating with other AWS services like CloudWatch or AWS Lambda
+- **Node Metrics**: CPU, memory, disk I/O, network traffic, system load
+- **Slurm Metrics**: Job status, queue statistics, node allocation, resource utilization
+- **GPU Metrics** (when present): Utilization, memory usage, temperature, power consumption
+- **EFA Metrics** (when present): Network traffic, packet rate, packet drops, RDMA operations
 
 ## Troubleshooting
 
 If you encounter issues:
 
-1. Check that the Prometheus agent is running on the nodes:
+1. Check that the Prometheus agent is running:
    ```bash
    systemctl status prometheus
    ```
@@ -153,6 +83,8 @@ If you encounter issues:
    ```
 
 3. Check IAM permissions for the EC2 instances
+
+4. Review CloudFormation stack events for any deployment errors
 
 ## References
 
