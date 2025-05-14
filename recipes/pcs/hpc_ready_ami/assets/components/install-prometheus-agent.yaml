@@ -45,7 +45,8 @@ Resources:
                       cd /tmp/scripts
                       # Note: The --endpoint parameter will be provided during AMI customization or instance launch
                       # This component just installs the agent without configuring the endpoint
-                      ./install-prometheus-agent.sh --endpoint "{{{{ssm:/pcs/observability/prometheus/endpoint}}}}" --gpu-exporter auto --efa-exporter auto
+                      PROMETHEUS_ENDPOINT=$(aws ssm get-parameter --name "/pcs/observability/prometheus/endpoint" --region ${AWS::Region} --query "Parameter.Value" --output text || echo "http://localhost:9090")
+                      ./install-prometheus-agent.sh --endpoint "${!PROMETHEUS_ENDPOINT}" --gpu-exporter auto --efa-exporter auto
               - name: Cleanup
                 action: ExecuteBash
                 inputs:

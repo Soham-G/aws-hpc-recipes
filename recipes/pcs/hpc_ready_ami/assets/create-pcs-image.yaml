@@ -71,14 +71,11 @@ Parameters:
   # Substack Parameters
   HpcRecipesS3Bucket:
     Type: String
-    Default: aws-hpc-recipes
+    Default: soham-hpc-stockholm-assets
     Description: HPC Recipes for AWS S3 bucket
-    AllowedValues:
-         - aws-hpc-recipes
-         - aws-hpc-recipes-dev
   HpcRecipesBranch:
     Type: String
-    Default: main
+    Default: pcs-observability
     Description: HPC Recipes for AWS release branch
     AllowedPattern: '^(?!.*/\.git$)(?!.*/\.)(?!.*\\.\.)[a-zA-Z0-9-_\.]+$'
   # /Substack Parameters
@@ -136,7 +133,7 @@ Resources:
       Parameters:
         HpcRecipesS3Bucket: !Ref HpcRecipesS3Bucket
         HpcRecipesBranch: !Ref HpcRecipesBranch
-      TemplateURL: 'https://soham-hpc-stockholm-assets.s3.eu-north-1.amazonaws.com/hpc-recipes-temp/nested-imagebuilder-components.yaml'
+      TemplateURL: !Sub 'https://${S3BucketName}.s3.${AWS::Region}.amazonaws.com/${S3BucketPrefix}/nested-imagebuilder-components.yaml'
 
   PCSImageRecipe:
     Type: AWS::ImageBuilder::ImageRecipe
@@ -155,6 +152,7 @@ Resources:
         - ComponentArn: !GetAtt [ImageBuilderComponentsStack, Outputs.PcsAgentInstallerComponent]
         - ComponentArn: !GetAtt [ImageBuilderComponentsStack, Outputs.PcsSlurmInstallerComponent]
         - ComponentArn: !GetAtt [ImageBuilderComponentsStack, Outputs.SpackInstallerComponent]
+        - ComponentArn: !GetAtt [ImageBuilderComponentsStack, Outputs.PrometheusAgentInstallerComponent]
       Description: Install PCS Agent, SLURM, and other components
       # Appending StackName enables multiple Recipes with the same base name, 
       # which is important for debugging.

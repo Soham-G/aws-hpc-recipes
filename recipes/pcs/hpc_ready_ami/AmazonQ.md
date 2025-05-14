@@ -1,53 +1,104 @@
-# PCS Observability with Amazon Managed Prometheus and Grafana
+# PCS Observability with Amazon Managed Prometheus
 
-This document describes the observability infrastructure created for AWS Parallel Computing Service (PCS) using Amazon Managed Prometheus and Amazon Managed Grafana.
+This document describes the observability infrastructure created for AWS Parallel Computing Service (PCS) using Amazon Managed Prometheus.
 
 ## Overview
 
 The CloudFormation template `pcs-observability.yaml` creates the following resources:
 
 1. **Amazon Managed Prometheus Workspace** - A fully managed Prometheus-compatible monitoring service
-2. **Amazon Managed Grafana Workspace** - A fully managed Grafana service for visualizing metrics
-3. **IAM Roles and Policies** - For secure access to the monitoring services
-4. **CloudWatch Dashboard** (optional) - For basic PCS metrics visualization
-5. **SSM Parameters** - To store endpoints for easy reference
+2. **IAM Roles and Policies** - For secure access to the monitoring services
+3. **CloudWatch Dashboard** - For basic PCS metrics visualization
+4. **SSM Parameters** - To store endpoints for easy reference
 
 Additionally, the following components are provided:
 
 1. **Prometheus Agent Installation Script** - For installing and configuring Prometheus on PCS nodes
 2. **EC2 ImageBuilder Component** - For integrating Prometheus agent into PCS AMIs
-3. **Grafana Dashboard Template** - Pre-configured dashboard for PCS metrics visualization
 
 ## Deployment Instructions
 
 ### 1. Deploy the Observability Infrastructure
 
-```bash
-aws cloudformation create-stack \
-  --stack-name pcs-observability \
-  --template-body file://assets/pcs-observability.yaml \
-  --parameters \
-    ParameterKey=GrafanaAdminUserEmail,ParameterValue=your-email@example.com \
-  --capabilities CAPABILITY_NAMED_IAM
-```
+deploy template: /assets/pcs-observability.yaml
 
-### 2. Add Prometheus Agent to PCS AMIs
+### 2. Build PCS AMI with Prometheus Agent
 
-Deploy the EC2 ImageBuilder component:
+add your s3 bucket and upload the modified files there so we can use it in the imagebuilder:
+
+modify this script with your bucket and run:
 
 ```bash
-aws cloudformation create-stack \
-  --stack-name prometheus-agent-component \
-  --template-body file://assets/components/install-prometheus-agent.yaml
+./upload-all-to-s3.sh
 ```
 
-Add the component to your PCS AMI build pipeline.
+Then deploy the CloudFormation stack to build the AMI:
 
-### 3. Configure Grafana
+```bash
+./deploy-modified-template.sh
+```
 
-1. Access the Grafana workspace using the URL from the CloudFormation outputs
-2. Add Amazon Managed Prometheus as a data source
-3. Import the pre-configured dashboard from `assets/grafana-dashboards/pcs-cluster-dashboard.json`
+This script will:
+- Create a CloudFormation stack that builds a PCS-ready AMI
+- Include the Prometheus agent component in the AMI
+- Use the forked version of the components from GitHub
+
+You can modify the variables at the top of the `deploy-modified-template.sh` script to customize:
+- Stack name
+- AWS region
+- Linux distribution (Amazon Linux 2, RHEL 9, Rocky Linux 9, or Ubuntu 22.04)
+- Architecture (x86 or arm64)
+- S3 bucket and prefix
+
+### 3. Visualizing Metrics
+
+You can visualize the metrics collected by Prometheus using:
+
+1. The deployed Grafana installation
+2. Amazon CloudWatch dashboards created by the template
+3. Any Prometheus-compatible visualization tool
+
+To configure your visualization tool:
+1. Use the Amazon Managed Prometheus workspace endpoint from SSM Parameter Store
+2. Import the pre-configured dashboard from `assets/dashboards/pcs-cluster-dashboard.json` if using Grafana
+
+## Using the Modified Template
+
+The modified template in this repository includes several enhancements:
+
+1. **Integrated Prometheus Agent** - The AMI build process automatically includes the Prometheus agent
+2. **Auto-Configuration** - The agent is pre-configured to send metrics to your Amazon Managed Prometheus workspace
+3. **Custom Dashboard** - A PCS-specific Grafana dashboard is included for immediate visibility
+
+### Steps to Use the Modified Template
+
+1. Clone the repository and navigate to the hpc_ready_ami directory:
+   ```bash
+   git clone https://github.com/Soham-G/aws-hpc-recipes.git -b pcs-observability
+   cd aws-hpc-recipes/recipes/pcs/hpc_ready_ami
+   ```
+
+2. Upload the required files to your S3 bucket:
+   ```bash
+   ./upload-to-s3.sh
+   ```
+
+3. Deploy the CloudFormation stack:
+   ```bash
+   ./deploy-modified-template.sh
+   ```
+
+4. Monitor the stack creation in the CloudFormation console
+
+5. Once the AMI is built, you can use it to launch PCS clusters with built-in observability
+
+### Customizing the Deployment
+
+You can customize the deployment by editing the following files:
+
+- `upload-to-s3.sh` - Modify S3 bucket, prefix, and which files to upload
+- `deploy-modified-template.sh` - Change region, distribution, architecture, etc.
+- `assets/components/install-prometheus-agent.yaml` - Customize the Prometheus agent configuration
 
 ## Metrics Collected
 
@@ -83,8 +134,8 @@ The Prometheus agent collects the following metrics:
 You can customize the monitoring setup by:
 
 1. Modifying the Prometheus configuration in the installation script
-2. Adding additional Grafana dashboards
-3. Setting up alerts in Grafana
+2. Adding additional dashboards to your preferred visualization tool
+3. Setting up alerts in Amazon Managed Prometheus
 4. Integrating with other AWS services like CloudWatch or AWS Lambda
 
 ## Troubleshooting
@@ -106,6 +157,4 @@ If you encounter issues:
 ## References
 
 - [Amazon Managed Prometheus Documentation](https://docs.aws.amazon.com/prometheus/latest/userguide/what-is-Amazon-Managed-Service-Prometheus.html)
-- [Amazon Managed Grafana Documentation](https://docs.aws.amazon.com/grafana/latest/userguide/what-is-Amazon-Managed-Service-Grafana.html)
 - [Prometheus Documentation](https://prometheus.io/docs/introduction/overview/)
-- [Grafana Documentation](https://grafana.com/docs/grafana/latest/)
