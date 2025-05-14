@@ -16,9 +16,6 @@ Parameters:
     Type: String
     Default: aws-hpc-recipes
     Description: HPC Recipes for AWS S3 bucket
-    AllowedValues:
-         - aws-hpc-recipes
-         - aws-hpc-recipes-dev
   HpcRecipesBranch:
     Type: String
     Default: main

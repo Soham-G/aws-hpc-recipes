@@ -9,22 +9,6 @@ S3_BUCKET="soham-hpc-stockholm-assets"
 S3_PREFIX="hpc-recipes-temp"
 SEMANTIC_VERSION=$(date +%Y.%m.%d)
 
-# First deploy the nested components stack
-echo "Deploying nested components stack..."
-aws cloudformation create-stack \
-  --region $REGION \
-  --stack-name "${STACK_NAME}-components" \
-  --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND \
-  --parameters \
-    ParameterKey=HpcRecipesS3Bucket,ParameterValue=$S3_BUCKET \
-    ParameterKey=HpcRecipesBranch,ParameterValue=$S3_PREFIX \
-  --template-url https://$S3_BUCKET.s3.$REGION.amazonaws.com/$S3_PREFIX/nested-imagebuilder-components.yaml
-
-echo "Waiting for components stack to complete..."
-aws cloudformation wait stack-create-complete \
-  --region $REGION \
-  --stack-name "${STACK_NAME}-components"
-
 # Deploy the main CloudFormation stack
 echo "Deploying CloudFormation stack $STACK_NAME..."
 aws cloudformation create-stack \
