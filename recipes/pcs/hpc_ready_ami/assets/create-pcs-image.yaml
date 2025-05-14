@@ -75,20 +75,21 @@ Parameters:
     Description: HPC Recipes for AWS S3 bucket
   HpcRecipesBranch:
     Type: String
-    Default: pcs-observability
-    Description: HPC Recipes for AWS release branch
-    AllowedPattern: '^(?!.*/\.git$)(?!.*/\.)(?!.*\\.\.)[a-zA-Z0-9-_\.]+$'
+    Default: hpc-recipes-temp
+    Description: S3 prefix for HPC Recipes assets
   # /Substack Parameters
 
   S3BucketName:
     Type: String
     Default: soham-hpc-stockholm-assets
     Description: Name of the S3 bucket containing the scripts
+    # This should match HpcRecipesS3Bucket for consistency
   
   S3BucketPrefix:
     Type: String
     Default: hpc-recipes-temp
     Description: Prefix (folder path) in the S3 bucket where scripts are stored
+    # This should match HpcRecipesBranch for consistency
 
 Conditions: 
   DistroImageStartsWithAmi: !Equals 

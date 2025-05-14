@@ -51,6 +51,35 @@ upload_to_s3() {
     return 0
 }
 
+# Function to fix YAML files by removing AllowedValues restrictions and updating descriptions
+fix_yaml_file() {
+    local input_file=$1
+    local output_file=$2
+    
+    echo "Fixing file: $(basename "$input_file")..."
+    
+    # Create a copy of the file in the temp directory
+    cp "$input_file" "$output_file"
+    
+    # Apply all modifications in a single sed command
+    sed -i '' \
+        -e '/HpcRecipesS3Bucket:/,/HpcRecipesBranch:/ {
+            /AllowedValues:/d
+            /- aws-hpc-recipes$/d
+            /- aws-hpc-recipes-dev$/d
+        }' \
+        -e '/HpcRecipesBranch:/,/Default:/ {
+            s/Description: Branch name for HPC Recipes assets/Description: S3 prefix for HPC Recipes assets/g
+            s/Description: Git branch name for HPC Recipes assets/Description: S3 prefix for HPC Recipes assets/g
+            s/Description: HPC Recipes for AWS release branch/Description: S3 prefix for HPC Recipes assets/g
+        }' \
+        -e '/HpcRecipesBranch:/,/AllowedPattern:/ {
+            /AllowedPattern:/d
+        }' \
+        -e "/\^(?!.*\/\\.git\$)(?!.*\/\\.)(?!.*\\\\\\.\.)\[a-zA-Z0-9-_\\.]+\$/d" \
+        "$output_file"
+}
+
 # Step 1: Upload all necessary files to S3
 echo "Step 1: Uploading files to S3..."
 
@@ -61,16 +90,30 @@ for script in ./assets/scripts/*.sh; do
     upload_to_s3 "$script" "$S3_PREFIX/scripts/$filename"
 done
 
-# Upload all component YAML files
-echo "Uploading component YAML files..."
+# Process and upload all component YAML files
+echo "Processing and uploading component YAML files..."
 for component in ./assets/components/*.yaml; do
     filename=$(basename "$component")
-    upload_to_s3 "$component" "$S3_PREFIX/components/$filename"
+    fixed_component="$TEMP_DIR/$filename"
+    
+    # Fix the component file
+    fix_yaml_file "$component" "$fixed_component"
+    
+    # Upload the fixed component
+    upload_to_s3 "$fixed_component" "$S3_PREFIX/components/$filename"
 done
 
 # Upload other YAML files
 echo "Uploading other YAML files..."
-upload_to_s3 "./assets/create-pcs-image.yaml" "$S3_PREFIX/create-pcs-image.yaml"
+
+# Modify create-pcs-image.yaml
+echo "Modifying create-pcs-image.yaml..."
+fix_yaml_file "./assets/create-pcs-image.yaml" "$TEMP_DIR/create-pcs-image.yaml"
+
+# Upload the modified create-pcs-image.yaml
+upload_to_s3 "$TEMP_DIR/create-pcs-image.yaml" "$S3_PREFIX/create-pcs-image.yaml"
+
+# Upload other files without modification
 upload_to_s3 "./assets/infrastructure-configurations.yaml" "$S3_PREFIX/infrastructure-configurations.yaml"
 upload_to_s3 "./assets/pcs-observability.yaml" "$S3_PREFIX/pcs-observability.yaml"
 
@@ -89,11 +132,11 @@ fi
 echo "Modifying nested-imagebuilder-components.yaml..."
 cp ./assets/nested-imagebuilder-components.yaml "$TEMP_DIR/nested-imagebuilder-components.yaml"
 
-# Replace all TemplateURL references to point to our bucket
-sed -i '' "s|TemplateURL: !Sub 'https://\${HpcRecipesS3Bucket}.s3.us-east-1.amazonaws.com/\${HpcRecipesBranch}/recipes/pcs/hpc_ready_ami/assets/components/|TemplateURL: !Sub 'https://$S3_BUCKET.s3.$REGION.amazonaws.com/$S3_PREFIX/components/|g" "$TEMP_DIR/nested-imagebuilder-components.yaml"
-
-# Fix the PrometheusAgentInstallerStack TemplateURL
-sed -i '' "s|TemplateURL: !Sub 'https://\${HpcRecipesS3Bucket}.s3.\${AWS::Region}.amazonaws.com/\${HpcRecipesBranch}/components/install-prometheus-agent.yaml'|TemplateURL: !Sub 'https://$S3_BUCKET.s3.$REGION.amazonaws.com/$S3_PREFIX/components/install-prometheus-agent.yaml'|g" "$TEMP_DIR/nested-imagebuilder-components.yaml"
+# Replace all template URLs in a single sed command
+sed -i '' \
+    -e "s|TemplateURL: !Sub 'https://\${HpcRecipesS3Bucket}.s3.us-east-1.amazonaws.com/\${HpcRecipesBranch}/recipes/pcs/hpc_ready_ami/assets/components/|TemplateURL: !Sub 'https://$S3_BUCKET.s3.$REGION.amazonaws.com/$S3_PREFIX/components/|g" \
+    -e "s|TemplateURL: !Sub 'https://\${HpcRecipesS3Bucket}.s3.\${AWS::Region}.amazonaws.com/\${HpcRecipesBranch}/components/install-prometheus-agent.yaml'|TemplateURL: !Sub 'https://$S3_BUCKET.s3.$REGION.amazonaws.com/$S3_PREFIX/components/install-prometheus-agent.yaml'|g" \
+    "$TEMP_DIR/nested-imagebuilder-components.yaml"
 
 # Upload the modified nested-imagebuilder-components.yaml
 upload_to_s3 "$TEMP_DIR/nested-imagebuilder-components.yaml" "$S3_PREFIX/nested-imagebuilder-components.yaml"
