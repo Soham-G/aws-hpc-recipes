@@ -14,6 +14,7 @@ Metadata:
           - EnableSsm
           - EnableS3ReadOnly
           - EnableCloudwatchAgent
+          - EnablePrometheus
 
 Parameters:
   RoleName:
@@ -41,11 +42,19 @@ Parameters:
     AllowedValues:
       - "True"
       - "False"
+  EnablePrometheus:
+    Type: String
+    Default: "False"
+    Description: "Grant instances permissions to write to Amazon Managed Prometheus"
+    AllowedValues:
+      - "True"
+      - "False"
 
 Conditions:
   EnableSsmCondition: !Equals [!Ref EnableSsm, "True"]
   EnableS3ReadOnlyCondition: !Equals [!Ref EnableS3ReadOnly, "True"]
   EnableCloudwatchAgentCondition: !Equals [!Ref EnableCloudwatchAgent, "True"]
+  EnablePrometheusCondition: !Equals [!Ref EnablePrometheus, "True"]
 
 Resources:
 
@@ -73,6 +82,10 @@ Resources:
         - !If
           - EnableCloudwatchAgentCondition
           - "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+          - !Ref AWS::NoValue
+        - !If
+          - EnablePrometheusCondition
+          - "arn:aws:iam::aws:policy/AmazonPrometheusRemoteWriteAccess"
           - !Ref AWS::NoValue
       Policies:
         - PolicyDocument:
