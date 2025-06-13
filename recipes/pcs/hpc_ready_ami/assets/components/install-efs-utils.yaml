@@ -16,6 +16,9 @@ Parameters:
     Type: String
     Default: aws-hpc-recipes
     Description: HPC Recipes for AWS S3 bucket
+    AllowedValues:
+         - aws-hpc-recipes
+         - aws-hpc-recipes-dev
   HpcRecipesBranch:
     Type: String
     Default: main
@@ -39,12 +42,12 @@ Resources:
               - name: DownloadCommon
                 action: WebDownload
                 inputs:
-                  - source: https://${HpcRecipesS3Bucket}.s3.${AWS::Region}.amazonaws.com/${HpcRecipesBranch}/scripts/common.sh
+                  - source: https://${HpcRecipesS3Bucket}.s3.us-east-1.amazonaws.com/${HpcRecipesBranch}/recipes/pcs/hpc_ready_ami/assets/scripts/common.sh
                     destination: common.sh
               - name: DownloadInstaller
                 action: WebDownload
                 inputs:
-                  - source: https://${HpcRecipesS3Bucket}.s3.${AWS::Region}.amazonaws.com/${HpcRecipesBranch}/scripts/install-efs-utils.sh
+                  - source: https://${HpcRecipesS3Bucket}.s3.us-east-1.amazonaws.com/${HpcRecipesBranch}/recipes/pcs/hpc_ready_ami/assets/scripts/install-efs-utils.sh
                     destination: install-efs-utils.sh
               - name: InstallEfsUtils
                 action: ExecuteBash
@@ -54,6 +57,8 @@ Resources:
                     - 'chmod +x install-efs-utils.sh'
                     - './install-efs-utils.sh'
 
+
 Outputs:
   ImageBuilderComponent:
     Value: !Ref EfsUtils
+

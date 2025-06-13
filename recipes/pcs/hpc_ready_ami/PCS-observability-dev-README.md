@@ -15,17 +15,17 @@ The solution creates the following resources:
 
 ### Deploy grafana instance and prometheus store
 
-1. Deploy script: assets/pcs-observability.yaml
+1. Deploy script: `assets/pcs-observability.yaml`. This creates the infrastructure required to store and display the observability metrics, which is the Prometheus workspace, the Grafana instance, and the associated roles.
 
 ### Create AMI with Prometheus agent
 
-1. Clone the repository and navigate to the directory:
+2. Clone the repository and navigate to the directory:
    ```bash
    git clone https://github.com/Soham-G/aws-hpc-recipes.git -b pcs-observability
    cd aws-hpc-recipes/recipes/pcs/hpc_ready_ami
    ```
 
-2. Edit the configuration variables in `deploy-pcs-observability.sh`:
+3. Edit the configuration variables in `deploy-pcs-observability.sh`:
    ```bash
    # Open the file in your preferred editor
    vim deploy-pcs-observability.sh
@@ -38,14 +38,14 @@ The solution creates the following resources:
    ARCHITECTURE="x86"     # Options: x86, arm64
    ```
 
-3. Run the deployment script:
+4. Run the deployment script:
    ```bash
    ./deploy-pcs-observability.sh
    ```
 
-4. Monitor the stack creation in the CloudFormation console
+5. Monitor the stack creation in the CloudFormation console
 
-5. Once the AMI is built, you can use it to launch PCS clusters with built-in observability
+6. Once the AMI is built, you can use it to launch PCS clusters with built-in observability
 
 ## Visualizing Metrics
 

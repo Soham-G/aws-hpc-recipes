@@ -33,20 +33,31 @@ Resources:
                   commands:
                     - |
                       mkdir -p /tmp/scripts
-                      cd /tmp/scripts
-                      curl -fsSL "https://raw.githubusercontent.com/Soham-G/aws-hpc-recipes/pcs-observability/recipes/pcs/hpc_ready_ami/assets/scripts/common.sh" -o "common.sh"
-                      curl -fsSL "https://raw.githubusercontent.com/Soham-G/aws-hpc-recipes/pcs-observability/recipes/pcs/hpc_ready_ami/assets/scripts/install-prometheus-agent.sh" -o "install-prometheus-agent.sh"
-                      chmod +x *.sh
+                      # cd /tmp/scripts
+                      # curl -fsSL "https://raw.githubusercontent.com/Soham-G/aws-hpc-recipes/pcs-observability/recipes/pcs/hpc_ready_ami/assets/scripts/common.sh" -o "common.sh"
+                      # curl -fsSL "https://raw.githubusercontent.com/Soham-G/aws-hpc-recipes/pcs-observability/recipes/pcs/hpc_ready_ami/assets/scripts/install-prometheus-agent.sh" -o "install-prometheus-agent.sh"
+                      # aws s3 cp s3://soham-hpc-stockholm-assets/hpc-recipes-temp/scripts/common.sh common.sh
+                      # aws s3 cp s3://soham-hpc-stockholm-assets/hpc-recipes-temp/scripts/install-prometheus-agent.sh install-prometheus-agent.sh
+              - name: DownloadCommon
+                action: WebDownload
+                inputs:
+                  - source: https://${HpcRecipesS3Bucket}.s3.us-east-1.amazonaws.com/${HpcRecipesBranch}/recipes/pcs/hpc_ready_ami/assets/scripts/common.sh
+                    destination: /tmp/scripts/common.sh
+              - name: DownloadInstaller
+                action: WebDownload
+                inputs:
+                  - source: https://${HpcRecipesS3Bucket}.s3.us-east-1.amazonaws.com/${HpcRecipesBranch}/recipes/pcs/hpc_ready_ami/assets/scripts/install-prometheus-agent.sh
+                    destination: /tmp/scripts/install-prometheus-agent.sh
               - name: InstallPrometheusAgent
                 action: ExecuteBash
                 inputs:
                   commands:
                     - |
                       cd /tmp/scripts
-                      # Note: The --endpoint parameter will be provided during AMI customization or instance launch
-                      # This component just installs the agent without configuring the endpoint
-                      PROMETHEUS_ENDPOINT=$(aws ssm get-parameter --name "/pcs/observability/prometheus/endpoint" --region ${AWS::Region} --query "Parameter.Value" --output text || echo "http://localhost:9090")
-                      ./install-prometheus-agent.sh --endpoint "${!PROMETHEUS_ENDPOINT}" --gpu-exporter auto --efa-exporter auto
+                      chmod +x *.sh
+                      # Note: The prometheus endpoint is configured externally to this setup, with a separate cloudformation template, and this script expects to find the parameter in SSM
+                      PROMETHEUS_ENDPOINT=$(aws ssm get-parameter --name "/pcs/observability/pcs-prometheus/endpoint" --region ${AWS::Region} --query "Parameter.Value" --output text || echo "http://localhost:9090")
+                      ./install-prometheus-agent.sh --endpoint "${!PROMETHEUS_ENDPOINT}" --gpu-exporter auto --efa-exporter auto --region ${AWS::Region}
               - name: Cleanup
                 action: ExecuteBash
                 inputs:
@@ -58,3 +69,5 @@ Outputs:
   ComponentArn:
     Description: ARN of the created EC2 ImageBuilder component
     Value: !GetAtt PrometheusAgentInstallerComponent.Arn
+  ImageBuilderComponent:
+    Value: !Ref PrometheusAgentInstallerComponent

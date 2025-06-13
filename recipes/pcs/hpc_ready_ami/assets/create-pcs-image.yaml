@@ -101,6 +101,23 @@ Conditions:
     - "ami"
 
 Resources:
+
+  # IAM Policy that allows the imagebuilder instance to read parameters from SSM parameter store
+  ImageBuilderParameterStorePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: ImageBuilderParameterStorePolicyPcsObservability
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - ssm:GetParameters
+              - ssm:GetParameter
+            Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/pcs/*
+      Roles:
+        - !Ref ImageBuilderRole
+
   # IAM Role and Instance Profile for Image Builder
   ImageBuilderRole:
     Type: AWS::IAM::Role
@@ -141,6 +158,7 @@ Resources:
     Properties:
       # Ordering is important here
       Components:
+        - ComponentArn: !Sub 'arn:aws:imagebuilder:${AWS::Region}:aws:component/aws-cli-version-2-linux/1.0.4/1'
         - ComponentArn: !GetAtt [ImageBuilderComponentsStack, Outputs.UpdateOsComponent]
         - ComponentArn: !GetAtt [ImageBuilderComponentsStack, Outputs.DowngradeKernelComponent]
         - ComponentArn: !Sub 'arn:aws:imagebuilder:${AWS::Region}:aws:component/reboot-linux/1.0.1/1'

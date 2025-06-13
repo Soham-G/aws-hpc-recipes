@@ -12,6 +12,7 @@ source "${SCRIPT_DIR}/common.sh"
 
 # Default values
 PROMETHEUS_ENDPOINT=""
+AWS_REGION=""
 SCRAPE_INTERVAL="15s"
 RETENTION_TIME="1h"
 CONFIG_DIR="/etc/prometheus"
@@ -48,6 +49,11 @@ while [[ $# -gt 0 ]]; do
       shift
       shift
       ;;
+		--region)
+			AWS_REGION="$2"
+			shift
+			shift
+			;;
     *)
       echo "Unknown option: $key"
       exit 1
@@ -55,7 +61,59 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Detect OS and set package manager
+# Detect OS and architecture
+detect_os() {
+  # Detect OS distribution and version
+  if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    OS_DISTRO=$(echo $ID | tr '[:upper:]' '[:lower:]')
+    OS_VERSION=$VERSION_ID
+  elif [ -f /etc/redhat-release ]; then
+    OS_DISTRO="rhel"
+    OS_VERSION=$(cat /etc/redhat-release | grep -oP '(?<=release )[0-9]+')
+  else
+    echo "Unsupported OS distribution"
+    exit 1
+  fi
+  
+  # Set package manager based on OS
+  case ${OS_DISTRO} in
+    ubuntu|debian)
+      PKG_MANAGER="apt-get"
+      PKG_UPDATE="apt-get update"
+      PKG_INSTALL="apt-get install -y"
+      ;;
+    amzn|rhel|centos|rocky|fedora)
+      PKG_MANAGER="dnf"
+      PKG_UPDATE="dnf check-update || true"  # Ignore non-zero exit code
+      PKG_INSTALL="dnf install -y"
+      ;;
+    *)
+      echo "Unsupported OS distribution: ${OS_DISTRO}"
+      exit 1
+      ;;
+  esac
+}
+
+detect_arch() {
+  # Detect system architecture
+  local SYSTEM_ARCH=$(uname -m)
+  
+  case ${SYSTEM_ARCH} in
+    x86_64)
+      ARCH="amd64"
+      ;;
+    aarch64)
+      ARCH="arm64"
+      ;;
+    *)
+      echo "Unsupported architecture: ${SYSTEM_ARCH}"
+      exit 1
+      ;;
+  esac
+}
+
+# Run detection functions
 detect_os
 detect_arch
 
@@ -103,7 +161,7 @@ create_prometheus_user() {
 
 # Download and install Prometheus
 install_prometheus() {
-  local PROMETHEUS_VERSION="2.45.0"
+  local PROMETHEUS_VERSION="3.4.1"
   local DOWNLOAD_URL="https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/prometheus-${PROMETHEUS_VERSION}.linux-${ARCH}.tar.gz"
   
   echo "Downloading Prometheus ${PROMETHEUS_VERSION}"
@@ -121,13 +179,12 @@ install_prometheus() {
   chown prometheus:prometheus /usr/local/bin/prometheus
   chown prometheus:prometheus /usr/local/bin/promtool
   
-  # Copy config files
-  cp -r prometheus-${PROMETHEUS_VERSION}.linux-${ARCH}/consoles ${CONFIG_DIR}
-  cp -r prometheus-${PROMETHEUS_VERSION}.linux-${ARCH}/console_libraries ${CONFIG_DIR}
+  # # Copy config files
+  # cp -r prometheus-${PROMETHEUS_VERSION}.linux-${ARCH}/consoles ${CONFIG_DIR}
+  # cp -r prometheus-${PROMETHEUS_VERSION}.linux-${ARCH}/console_libraries ${CONFIG_DIR}
   
   # Set permissions
-  chown -R prometheus:prometheus ${CONFIG_DIR}/consoles
-  chown -R prometheus:prometheus ${CONFIG_DIR}/console_libraries
+  chown -R prometheus:prometheus ${CONFIG_DIR}
   
   # Clean up
   rm -rf prometheus-${PROMETHEUS_VERSION}.linux-${ARCH} prometheus-${PROMETHEUS_VERSION}.linux-${ARCH}.tar.gz
@@ -138,44 +195,44 @@ configure_prometheus() {
   echo "Configuring Prometheus"
   
   # Create prometheus.yml
-  cat > ${CONFIG_DIR}/prometheus.yml << EOF
-global:
-  scrape_interval: ${SCRAPE_INTERVAL}
-  evaluation_interval: ${SCRAPE_INTERVAL}
-  
-remote_write:
-  - url: ${PROMETHEUS_ENDPOINT}api/v1/remote_write
-    sigv4:
-      region: ${AWS_REGION}
+  cat > ${CONFIG_DIR}/prometheus.yml <<-EOF
+	global:
+		scrape_interval: ${SCRAPE_INTERVAL}
+		evaluation_interval: ${SCRAPE_INTERVAL}
+		
+	remote_write:
+		- url: ${PROMETHEUS_ENDPOINT}api/v1/remote_write
+			sigv4:
+				region: ${AWS_REGION}
 
-scrape_configs:
-  - job_name: 'node'
-    static_configs:
-      - targets: ['localhost:9100']
-  
-  - job_name: 'slurm'
-    static_configs:
-      - targets: ['localhost:9101']
-EOF
+	scrape_configs:
+		- job_name: 'node'
+			static_configs:
+				- targets: ['localhost:9100']
+		
+		- job_name: 'slurm'
+			static_configs:
+				- targets: ['localhost:9101']
+	EOF
 
   # Add GPU exporter config if enabled
   if [ "$INSTALL_GPU_EXPORTER" = "true" ]; then
-    cat >> ${CONFIG_DIR}/prometheus.yml << EOF
-  
-  - job_name: 'nvidia_gpu'
-    static_configs:
-      - targets: ['localhost:9835']
-EOF
+    cat >> ${CONFIG_DIR}/prometheus.yml <<-EOF
+		
+		- job_name: 'nvidia_gpu'
+			static_configs:
+				- targets: ['localhost:9835']
+	EOF
   fi
 
   # Add EFA exporter config if enabled
   if [ "$INSTALL_EFA_EXPORTER" = "true" ]; then
-    cat >> ${CONFIG_DIR}/prometheus.yml << EOF
-  
-  - job_name: 'efa_metrics'
-    static_configs:
-      - targets: ['localhost:9400']
-EOF
+    cat >> ${CONFIG_DIR}/prometheus.yml <<-EOF
+		
+		- job_name: 'efa_metrics'
+			static_configs:
+				- targets: ['localhost:9400']
+	EOF
   fi
   
   chown prometheus:prometheus ${CONFIG_DIR}/prometheus.yml
@@ -185,27 +242,27 @@ EOF
 create_systemd_service() {
   echo "Creating systemd service"
   
-  cat > /etc/systemd/system/prometheus.service << EOF
-[Unit]
-Description=Prometheus
-Wants=network-online.target
-After=network-online.target
+  cat > /etc/systemd/system/prometheus.service <<-EOF
+	[Unit]
+	Description=Prometheus
+	Wants=network-online.target
+	After=network-online.target
 
-[Service]
-User=prometheus
-Group=prometheus
-Type=simple
-ExecStart=/usr/local/bin/prometheus \
-  --config.file=${CONFIG_DIR}/prometheus.yml \
-  --storage.tsdb.path=${DATA_DIR} \
-  --storage.tsdb.retention.time=${RETENTION_TIME} \
-  --web.console.templates=${CONFIG_DIR}/consoles \
-  --web.console.libraries=${CONFIG_DIR}/console_libraries \
-  --web.listen-address=0.0.0.0:9090
+	[Service]
+	User=prometheus
+	Group=prometheus
+	Type=simple
+	ExecStart=/usr/local/bin/prometheus \
+		--config.file=${CONFIG_DIR}/prometheus.yml \
+		--storage.tsdb.path=${DATA_DIR} \
+		--storage.tsdb.retention.time=${RETENTION_TIME} \
+		--web.console.templates=${CONFIG_DIR}/consoles \
+		--web.console.libraries=${CONFIG_DIR}/console_libraries \
+		--web.listen-address=0.0.0.0:9090
 
-[Install]
-WantedBy=multi-user.target
-EOF
+	[Install]
+	WantedBy=multi-user.target
+	EOF
   
   systemctl daemon-reload
   systemctl enable prometheus
@@ -216,7 +273,7 @@ EOF
 install_node_exporter() {
   echo "Installing Node Exporter"
   
-  local NODE_EXPORTER_VERSION="1.6.1"
+  local NODE_EXPORTER_VERSION="1.9.1"
   local DOWNLOAD_URL="https://github.com/prometheus/node_exporter/releases/download/v${NODE_EXPORTER_VERSION}/node_exporter-${NODE_EXPORTER_VERSION}.linux-${ARCH}.tar.gz"
   
   # Create user if it doesn't exist
@@ -234,21 +291,21 @@ install_node_exporter() {
   chown node_exporter:node_exporter /usr/local/bin/node_exporter
   
   # Create systemd service
-  cat > /etc/systemd/system/node_exporter.service << EOF
-[Unit]
-Description=Node Exporter
-Wants=network-online.target
-After=network-online.target
+  cat > /etc/systemd/system/node_exporter.service <<-EOF
+	[Unit]
+	Description=Node Exporter
+	Wants=network-online.target
+	After=network-online.target
 
-[Service]
-User=node_exporter
-Group=node_exporter
-Type=simple
-ExecStart=/usr/local/bin/node_exporter
+	[Service]
+	User=node_exporter
+	Group=node_exporter
+	Type=simple
+	ExecStart=/usr/local/bin/node_exporter
 
-[Install]
-WantedBy=multi-user.target
-EOF
+	[Install]
+	WantedBy=multi-user.target
+	EOF
   
   # Clean up
   rm -rf node_exporter-${NODE_EXPORTER_VERSION}.linux-${ARCH} node_exporter-${NODE_EXPORTER_VERSION}.linux-${ARCH}.tar.gz
@@ -280,21 +337,21 @@ install_slurm_exporter() {
   chown slurm_exporter:slurm_exporter /usr/local/bin/prometheus-slurm-exporter
   
   # Create systemd service
-  cat > /etc/systemd/system/slurm_exporter.service << EOF
-[Unit]
-Description=Slurm Exporter
-Wants=network-online.target
-After=network-online.target
+  cat > /etc/systemd/system/slurm_exporter.service <<-EOF
+	[Unit]
+	Description=Slurm Exporter
+	Wants=network-online.target
+	After=network-online.target
 
-[Service]
-User=slurm_exporter
-Group=slurm_exporter
-Type=simple
-ExecStart=/usr/local/bin/prometheus-slurm-exporter -listen-address=:9101
+	[Service]
+	User=slurm_exporter
+	Group=slurm_exporter
+	Type=simple
+	ExecStart=/usr/local/bin/prometheus-slurm-exporter -listen-address=:9101
 
-[Install]
-WantedBy=multi-user.target
-EOF
+	[Install]
+	WantedBy=multi-user.target
+	EOF
   
   # Clean up
   rm -f /tmp/prometheus-slurm-exporter
@@ -304,39 +361,6 @@ EOF
   systemctl start slurm_exporter
 }
 
-# Main execution
-if [ -z "$PROMETHEUS_ENDPOINT" ]; then
-  echo "Error: Prometheus endpoint is required. Use --endpoint parameter."
-  exit 1
-fi
-
-# Get AWS region from instance metadata if not set
-if [ -z "$AWS_REGION" ]; then
-  AWS_REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/region)
-fi
-
-# Check for hardware
-check_gpu_presence
-check_efa_presence
-
-create_prometheus_user
-install_prometheus
-configure_prometheus
-create_systemd_service
-install_node_exporter
-install_slurm_exporter
-
-# Install GPU and EFA exporters if hardware is present
-if [ "$INSTALL_GPU_EXPORTER" = "true" ]; then
-  install_nvidia_exporter
-fi
-
-if [ "$INSTALL_EFA_EXPORTER" = "true" ]; then
-  install_efa_exporter
-fi
-
-echo "Prometheus agent installation completed successfully"
-exit 0
 # Install NVIDIA GPU Exporter
 install_nvidia_exporter() {
   if [ "$INSTALL_GPU_EXPORTER" != "true" ]; then
@@ -383,21 +407,21 @@ install_nvidia_exporter() {
   chown nvidia_exporter:nvidia_exporter /usr/local/bin/dcgm-exporter
   
   # Create systemd service
-  cat > /etc/systemd/system/nvidia_exporter.service << EOF
-[Unit]
-Description=NVIDIA GPU Metrics Exporter
-Wants=nvidia-dcgm.service
-After=nvidia-dcgm.service
+  cat > /etc/systemd/system/nvidia_exporter.service <<-EOF
+	[Unit]
+	Description=NVIDIA GPU Metrics Exporter
+	Wants=nvidia-dcgm.service
+	After=nvidia-dcgm.service
 
-[Service]
-User=nvidia_exporter
-Group=nvidia_exporter
-Type=simple
-ExecStart=/usr/local/bin/dcgm-exporter --port=9835
+	[Service]
+	User=nvidia_exporter
+	Group=nvidia_exporter
+	Type=simple
+	ExecStart=/usr/local/bin/dcgm-exporter --port=9835
 
-[Install]
-WantedBy=multi-user.target
-EOF
+	[Install]
+	WantedBy=multi-user.target
+	EOF
   
   systemctl daemon-reload
   systemctl enable nvidia_exporter
@@ -431,141 +455,170 @@ install_efa_exporter() {
   # Create EFA exporter script
   mkdir -p /opt/efa-exporter
   
-  cat > /opt/efa-exporter/efa_exporter.py << 'EOF'
-#!/usr/bin/env python3
-import os
-import re
-import time
-import socket
-from http.server import HTTPServer, BaseHTTPRequestHandler
+  cat > /opt/efa-exporter/efa_exporter.py <<-'EOF'
+	#!/usr/bin/env python3
+	import os
+	import re
+	import time
+	import socket
+	from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# EFA metrics to collect
-EFA_METRICS = {
-    'tx_bytes': 'efa_transmit_bytes_total',
-    'rx_bytes': 'efa_receive_bytes_total',
-    'tx_pkts': 'efa_transmit_packets_total',
-    'rx_pkts': 'efa_receive_packets_total',
-    'rx_drops': 'efa_receive_drops_total',
-    'tx_drops': 'efa_transmit_drops_total',
-    'rdma_read_bytes': 'efa_rdma_read_bytes_total',
-    'rdma_write_bytes': 'efa_rdma_write_bytes_total',
-    'rdma_read_wr': 'efa_rdma_read_work_requests_total',
-    'rdma_write_wr': 'efa_rdma_write_work_requests_total'
-}
+	# EFA metrics to collect
+	EFA_METRICS = {
+			'tx_bytes': 'efa_transmit_bytes_total',
+			'rx_bytes': 'efa_receive_bytes_total',
+			'tx_pkts': 'efa_transmit_packets_total',
+			'rx_pkts': 'efa_receive_packets_total',
+			'rx_drops': 'efa_receive_drops_total',
+			'tx_drops': 'efa_transmit_drops_total',
+			'rdma_read_bytes': 'efa_rdma_read_bytes_total',
+			'rdma_write_bytes': 'efa_rdma_write_bytes_total',
+			'rdma_read_wr': 'efa_rdma_read_work_requests_total',
+			'rdma_write_wr': 'efa_rdma_write_work_requests_total'
+	}
 
-def get_efa_interfaces():
-    """Get list of EFA interfaces"""
-    interfaces = []
-    try:
-        with open('/proc/net/dev', 'r') as f:
-            for line in f:
-                if 'efa' in line:
-                    interface = line.split(':')[0].strip()
-                    interfaces.append(interface)
-    except Exception as e:
-        print(f"Error getting EFA interfaces: {e}")
-    return interfaces
+	def get_efa_interfaces():
+			"""Get list of EFA interfaces"""
+			interfaces = []
+			try:
+					with open('/proc/net/dev', 'r') as f:
+							for line in f:
+									if 'efa' in line:
+											interface = line.split(':')[0].strip()
+											interfaces.append(interface)
+			except Exception as e:
+					print(f"Error getting EFA interfaces: {e}")
+			return interfaces
 
-def get_efa_stats(interface):
-    """Get EFA statistics for a specific interface"""
-    stats = {}
-    try:
-        with open(f'/proc/net/dev', 'r') as f:
-            for line in f:
-                if interface in line:
-                    parts = line.split(':')
-                    if len(parts) < 2:
-                        continue
-                    values = parts[1].strip().split()
-                    stats['rx_bytes'] = values[0]
-                    stats['rx_pkts'] = values[1]
-                    stats['rx_drops'] = values[3]
-                    stats['tx_bytes'] = values[8]
-                    stats['tx_pkts'] = values[9]
-                    stats['tx_drops'] = values[11]
-                    break
-    except Exception as e:
-        print(f"Error getting stats for {interface}: {e}")
-    
-    # Try to get RDMA stats if available
-    try:
-        rdma_stats_path = f'/sys/class/infiniband/{interface}/ports/1/counters'
-        if os.path.exists(rdma_stats_path):
-            for metric in ['rdma_read_bytes', 'rdma_write_bytes', 'rdma_read_wr', 'rdma_write_wr']:
-                try:
-                    with open(f'{rdma_stats_path}/{metric}', 'r') as f:
-                        stats[metric] = f.read().strip()
-                except:
-                    pass
-    except Exception as e:
-        print(f"Error getting RDMA stats for {interface}: {e}")
-    
-    return stats
+	def get_efa_stats(interface):
+			"""Get EFA statistics for a specific interface"""
+			stats = {}
+			try:
+					with open(f'/proc/net/dev', 'r') as f:
+							for line in f:
+									if interface in line:
+											parts = line.split(':')
+											if len(parts) < 2:
+													continue
+											values = parts[1].strip().split()
+											stats['rx_bytes'] = values[0]
+											stats['rx_pkts'] = values[1]
+											stats['rx_drops'] = values[3]
+											stats['tx_bytes'] = values[8]
+											stats['tx_pkts'] = values[9]
+											stats['tx_drops'] = values[11]
+											break
+			except Exception as e:
+					print(f"Error getting stats for {interface}: {e}")
+			
+			# Try to get RDMA stats if available
+			try:
+					rdma_stats_path = f'/sys/class/infiniband/{interface}/ports/1/counters'
+					if os.path.exists(rdma_stats_path):
+							for metric in ['rdma_read_bytes', 'rdma_write_bytes', 'rdma_read_wr', 'rdma_write_wr']:
+									try:
+											with open(f'{rdma_stats_path}/{metric}', 'r') as f:
+													stats[metric] = f.read().strip()
+									except:
+											pass
+			except Exception as e:
+					print(f"Error getting RDMA stats for {interface}: {e}")
+			
+			return stats
 
-class EFAMetricsHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == '/metrics':
-            self.send_response(200)
-            self.send_header('Content-type', 'text/plain')
-            self.end_headers()
-            
-            # Get hostname
-            hostname = socket.gethostname()
-            
-            # Get EFA interfaces
-            interfaces = get_efa_interfaces()
-            
-            # Collect metrics
-            output = []
-            output.append('# HELP efa_up EFA interface is up (1) or down (0)')
-            output.append('# TYPE efa_up gauge')
-            
-            for interface in interfaces:
-                output.append(f'efa_up{{instance="{hostname}",interface="{interface}"}} 1')
-                
-                stats = get_efa_stats(interface)
-                for stat_key, metric_name in EFA_METRICS.items():
-                    if stat_key in stats:
-                        output.append(f'# HELP {metric_name} EFA {stat_key.replace("_", " ")}')
-                        output.append(f'# TYPE {metric_name} counter')
-                        output.append(f'{metric_name}{{instance="{hostname}",interface="{interface}"}} {stats[stat_key]}')
-            
-            self.wfile.write('\n'.join(output).encode())
-        else:
-            self.send_response(404)
-            self.end_headers()
+	class EFAMetricsHandler(BaseHTTPRequestHandler):
+			def do_GET(self):
+					if self.path == '/metrics':
+							self.send_response(200)
+							self.send_header('Content-type', 'text/plain')
+							self.end_headers()
+							
+							# Get hostname
+							hostname = socket.gethostname()
+							
+							# Get EFA interfaces
+							interfaces = get_efa_interfaces()
+							
+							# Collect metrics
+							output = []
+							output.append('# HELP efa_up EFA interface is up (1) or down (0)')
+							output.append('# TYPE efa_up gauge')
+							
+							for interface in interfaces:
+									output.append(f'efa_up{{instance="{hostname}",interface="{interface}"}} 1')
+									
+									stats = get_efa_stats(interface)
+									for stat_key, metric_name in EFA_METRICS.items():
+											if stat_key in stats:
+													output.append(f'# HELP {metric_name} EFA {stat_key.replace("_", " ")}')
+													output.append(f'# TYPE {metric_name} counter')
+													output.append(f'{metric_name}{{instance="{hostname}",interface="{interface}"}} {stats[stat_key]}')
+							
+							self.wfile.write('\n'.join(output).encode())
+					else:
+							self.send_response(404)
+							self.end_headers()
 
-def run_server(port=9400):
-    server_address = ('', port)
-    httpd = HTTPServer(server_address, EFAMetricsHandler)
-    print(f'Starting EFA exporter on port {port}')
-    httpd.serve_forever()
+	def run_server(port=9400):
+			server_address = ('', port)
+			httpd = HTTPServer(server_address, EFAMetricsHandler)
+			print(f'Starting EFA exporter on port {port}')
+			httpd.serve_forever()
 
-if __name__ == '__main__':
-    run_server()
-EOF
+	if __name__ == '__main__':
+			run_server()
+	EOF
   
   chmod +x /opt/efa-exporter/efa_exporter.py
   chown -R efa_exporter:efa_exporter /opt/efa-exporter
   
   # Create systemd service
-  cat > /etc/systemd/system/efa_exporter.service << EOF
-[Unit]
-Description=EFA Metrics Exporter
-Wants=network-online.target
-After=network-online.target
+  cat > /etc/systemd/system/efa_exporter.service <<-EOF
+	[Unit]
+	Description=EFA Metrics Exporter
+	Wants=network-online.target
+	After=network-online.target
 
-[Service]
-User=efa_exporter
-Group=efa_exporter
-Type=simple
-ExecStart=/usr/bin/python3 /opt/efa-exporter/efa_exporter.py
+	[Service]
+	User=efa_exporter
+	Group=efa_exporter
+	Type=simple
+	ExecStart=/usr/bin/python3 /opt/efa-exporter/efa_exporter.py
 
-[Install]
-WantedBy=multi-user.target
-EOF
+	[Install]
+	WantedBy=multi-user.target
+	EOF
   
   systemctl daemon-reload
   systemctl enable efa_exporter
   systemctl start efa_exporter
 }
+
+# Main execution
+if [ -z "$PROMETHEUS_ENDPOINT" ]; then
+  echo "Error: Prometheus endpoint is required. Use --endpoint parameter."
+  exit 1
+fi
+
+# Check for hardware
+check_gpu_presence
+check_efa_presence
+
+create_prometheus_user
+install_prometheus
+configure_prometheus
+create_systemd_service
+install_node_exporter
+install_slurm_exporter
+
+# Install GPU and EFA exporters if hardware is present
+if [ "$INSTALL_GPU_EXPORTER" = "true" ]; then
+  install_nvidia_exporter
+fi
+
+if [ "$INSTALL_EFA_EXPORTER" = "true" ]; then
+  install_efa_exporter
+fi
+
+echo "Prometheus agent installation completed successfully"
+exit 0

@@ -77,6 +77,15 @@ fix_yaml_file() {
             /AllowedPattern:/d
         }' \
         -e "/\^(?!.*\/\\.git\$)(?!.*\/\\.)(?!.*\\\\\\.\.)\[a-zA-Z0-9-_\\.]+\$/d" \
+        -e 's/action: WebDownload/action: S3Download/g' \
+        -e "s|source: https://\${HpcRecipesS3Bucket}.s3.us-east-1.amazonaws.com/\${HpcRecipesBranch}/recipes/pcs/hpc_ready_ami/assets/scripts/|source: s3://$S3_BUCKET/$S3_PREFIX/scripts/|g" \
+        -e "s|source: https://\${HpcRecipesS3Bucket}.s3.\${AWS::Region}.amazonaws.com/\${HpcRecipesBranch}/recipes/pcs/hpc_ready_ami/assets/scripts/|source: s3://$S3_BUCKET/$S3_PREFIX/scripts/|g" \
+        -e "s|source: https://aws-hpc-recipes.s3.us-east-1.amazonaws.com/main/recipes/pcs/hpc_ready_ami/assets/scripts/|source: s3://$S3_BUCKET/$S3_PREFIX/scripts/|g" \
+        -e "s|source: https://aws-hpc-recipes-dev.s3.us-east-1.amazonaws.com/\${HpcRecipesBranch}/recipes/pcs/hpc_ready_ami/assets/scripts/|source: s3://$S3_BUCKET/$S3_PREFIX/scripts/|g" \
+        -e "s|https://\${HpcRecipesS3Bucket}.s3.us-east-1.amazonaws.com/\${HpcRecipesBranch}/recipes/pcs/hpc_ready_ami/assets/scripts/|https://$S3_BUCKET.s3.$REGION.amazonaws.com/$S3_PREFIX/scripts/|g" \
+        -e "s|https://\${HpcRecipesS3Bucket}.s3.\${AWS::Region}.amazonaws.com/\${HpcRecipesBranch}/recipes/pcs/hpc_ready_ami/assets/scripts/|https://$S3_BUCKET.s3.$REGION.amazonaws.com/$S3_PREFIX/scripts/|g" \
+        -e "s|https://aws-hpc-recipes.s3.us-east-1.amazonaws.com/main/recipes/pcs/hpc_ready_ami/assets/scripts/|https://$S3_BUCKET.s3.$REGION.amazonaws.com/$S3_PREFIX/scripts/|g" \
+        -e "s|https://aws-hpc-recipes-dev.s3.us-east-1.amazonaws.com/\${HpcRecipesBranch}/recipes/pcs/hpc_ready_ami/assets/scripts/|https://$S3_BUCKET.s3.$REGION.amazonaws.com/$S3_PREFIX/scripts/|g" \
         "$output_file"
 }
 
@@ -103,7 +112,7 @@ for component in ./assets/components/*.yaml; do
     upload_to_s3 "$fixed_component" "$S3_PREFIX/components/$filename"
 done
 
-# Upload other YAML files
+
 echo "Uploading other YAML files..."
 
 # Modify create-pcs-image.yaml
@@ -135,7 +144,6 @@ cp ./assets/nested-imagebuilder-components.yaml "$TEMP_DIR/nested-imagebuilder-c
 # Replace all template URLs in a single sed command
 sed -i '' \
     -e "s|TemplateURL: !Sub 'https://\${HpcRecipesS3Bucket}.s3.us-east-1.amazonaws.com/\${HpcRecipesBranch}/recipes/pcs/hpc_ready_ami/assets/components/|TemplateURL: !Sub 'https://$S3_BUCKET.s3.$REGION.amazonaws.com/$S3_PREFIX/components/|g" \
-    -e "s|TemplateURL: !Sub 'https://\${HpcRecipesS3Bucket}.s3.\${AWS::Region}.amazonaws.com/\${HpcRecipesBranch}/components/install-prometheus-agent.yaml'|TemplateURL: !Sub 'https://$S3_BUCKET.s3.$REGION.amazonaws.com/$S3_PREFIX/components/install-prometheus-agent.yaml'|g" \
     "$TEMP_DIR/nested-imagebuilder-components.yaml"
 
 # Upload the modified nested-imagebuilder-components.yaml
